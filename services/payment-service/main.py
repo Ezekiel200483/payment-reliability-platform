@@ -353,8 +353,8 @@ async def list_payments(
 
 if __name__ == "__main__":
     # Start Prometheus metrics server
-    start_http_server(9001)
-    logger.info("payment_service_starting", metrics_port=9001)
+    start_http_server(8001)
+    logger.info("payment_service_starting", metrics_port=8001)
     
     # Start FastAPI application
-    uvicorn.run(app, host="0.0.0.0", port=9000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
