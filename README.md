@@ -1,8 +1,10 @@
-# 🚀 SRE Financial Platform - Quick Setup Guide
+
+
+# Financial Platform - Quick Setup Guide
 
 
 
-## 🎯 What You're Building
+## What You're Building
 
 A complete payment monitoring stack with:
 - **Payment API** (FastAPI service)
@@ -13,7 +15,7 @@ A complete payment monitoring stack with:
 
 ---
 
-## ⚡ Quick Start (5 Minutes)
+## Quick Start 
 
 ### Step 1: Clone and Enter Directory
 ```bash
@@ -54,16 +56,6 @@ curl -X POST http://localhost:9000/payments \
 
 ---
 
-## 🐳 Dockerization Details (SRE Deep Dive)
-
-### Architecture Overview
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Payment API   │    │   Prometheus    │    │    Grafana      │
-│   (Port 9000)   │───▶│   (Port 9090)   │───▶│   (Port 3000)   │
-│   + /metrics    │    │   Scrapes API   │    │   Dashboards    │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-```
 
 ### What's Inside docker-compose.yml
 
@@ -109,13 +101,7 @@ docker-compose up -d
 docker-compose ps
 ```
 
-You should see:
-```
-       Name              Command               State            Ports
-------------------------------------------------------------------------
-grafana         /run.sh                      Up      0.0.0.0:3000->3000/tcp
-payment-service python main.py              Up      0.0.0.0:9000->9000/tcp
-prometheus      /bin/prometheus --config...  Up      0.0.0.0:9090->9090/tcp
+
 ```
 
 #### 3. Verify Monitoring Pipeline
@@ -177,13 +163,13 @@ docker-compose restart grafana
 
 ---
 
-## 🎤 Interview Demo Script (15 Minutes)
+## 
 
-### Slide 1: "The Problem" (2 min)
-"At Interswitch, payment reliability is critical. One minute of downtime = millions in lost revenue. 
+###  "The Problem" 
+"Payment reliability is critical. One minute of downtime = millions in lost revenue. 
 This is how I'd set up monitoring for Nigerian payment systems."
 
-### Slide 2: "The Solution" (3 min)
+### "The Solution" (3 min)
 ```bash
 # Start the platform
 docker-compose up -d
@@ -192,7 +178,7 @@ docker-compose up -d
 curl http://localhost:9000/health
 ```
 
-### Slide 3: "Simulate Nigerian Payments" (5 min)
+### "Simulate Nigerian Payments" (5 min)
 ```bash
 # USSD payment (common in Nigeria)
 curl -X POST http://localhost:9000/payments \
@@ -207,13 +193,13 @@ curl -X POST http://localhost:9000/payments \
   -d '{"amount": -100, "currency": "NGN", "method": "card"}'
 ```
 
-### Slide 4: "Show Prometheus Metrics" (3 min)
+### "Show Prometheus Metrics" (3 min)
 - Open http://localhost:9090
 - Show `payment_requests_total` increasing
 - Show `payment_amount_naira_total` for business metrics
 - Show `payment_errors_total` for reliability
 
-### Slide 5: "Grafana Business Dashboard" (2 min)
+### "Grafana Business Dashboard" (2 min)
 - Open http://localhost:3000
 - Show payment volume, success rates, error rates
 - Emphasize "business metrics, not just tech metrics"
@@ -259,3 +245,5 @@ This demo includes Nigerian-specific features:
 5. **Scaling:** Kubernetes deployment configs
 
 **Remember:** As an SRE, your job is making payments reliable, fast, and observable! 🚀
+
+
