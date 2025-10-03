@@ -129,7 +129,7 @@ open http://localhost:3000
 # Type: payment_requests_total
 # Click Run Query → You should see a graph! 📈
 ```
-
+![image alt](https://github.com/Ezekiel200483/payment-reliability-platform/blob/94cf6b1c3febf25b660537591f4017f913efcec3/Screenshot%202025-10-03%20at%2015.41.29.png)
 
 ---
 
@@ -169,7 +169,7 @@ docker-compose restart grafana
 "Payment reliability is critical. One minute of downtime = millions in lost revenue. 
 This is how I'd set up monitoring for Nigerian payment systems."
 
-### "The Solution" (3 min)
+### "The Solution" 
 ```bash
 # Start the platform
 docker-compose up -d
@@ -178,7 +178,7 @@ docker-compose up -d
 curl http://localhost:9000/health
 ```
 
-### "Simulate Nigerian Payments" (5 min)
+### "Simulate Nigerian Payments" 
 ```bash
 # USSD payment (common in Nigeria)
 curl -X POST http://localhost:9000/payments \
@@ -193,7 +193,7 @@ curl -X POST http://localhost:9000/payments \
   -d '{"amount": -100, "currency": "NGN", "method": "card"}'
 ```
 
-### "Show Prometheus Metrics" (3 min)
+### "Show Prometheus Metrics" 
 - Open http://localhost:9090
 - Show `payment_requests_total` increasing
 - Show `payment_amount_naira_total` for business metrics
