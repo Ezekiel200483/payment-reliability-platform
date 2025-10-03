@@ -214,27 +214,6 @@ curl -X POST http://localhost:9000/payments \
 
 ---
 
-## 🇳🇬 Nigerian Payment Context
-
-This demo includes Nigerian-specific features:
-
-**Payment Methods:**
-- 📱 USSD (*737# codes)
-- 💳 Bank transfers (very popular)
-- 🏦 Card payments
-- 📲 Mobile money
-
-**Fraud Detection:**
-- 🚨 High-value transaction alerts (>₦100,000)
-- 🔍 Velocity checks (too many transactions)
-- 📍 Geographic anomalies
-
-**Business Metrics:**
-- 💰 Transaction volume in Naira
-- ⚡ Payment method popularity
-- 🏃‍♂️ Processing speed per method
-- 🎯 Success rates by bank
-
 ---
 
 ## 📚 Next Steps
