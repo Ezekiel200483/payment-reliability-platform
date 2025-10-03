@@ -1,0 +1,209 @@
+# SRE Alert Rules for Financial Services Platform
+# These alerts are designed for production financial systems like Interswitch
+
+groups:
+  - name: payment_service_alerts
+    rules:
+      # High-level SLI/SLO alerts
+      - alert: PaymentServiceDown
+        expr: up{job="payment-service"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: payment-service
+          runbook: "https://runbooks.company.com/payment-service-down"
+        annotations:
+          summary: "Payment service is down"
+          description: "Payment service has been down for more than 30 seconds. This impacts all payment processing."
+
+      - alert: HighPaymentErrorRate
+        expr: (rate(payment_requests_total{status="failed"}[5m]) / rate(payment_requests_total[5m])) * 100 > 1
+        for: 2m
+        labels:
+          severity: critical
+          service: payment-service
+          slo: availability
+        annotations:
+          summary: "High payment error rate detected"
+          description: "Payment error rate is {{ $value }}% over the last 5 minutes, exceeding SLO of 1%"
+
+      - alert: PaymentLatencyHigh
+        expr: histogram_quantile(0.95, rate(payment_request_duration_seconds_bucket[5m])) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+          service: payment-service
+          slo: latency
+        annotations:
+          summary: "High payment processing latency"
+          description: "95th percentile payment latency is {{ $value }}s, exceeding SLO of 500ms"
+
+      - alert: PaymentLatencyCritical
+        expr: histogram_quantile(0.95, rate(payment_request_duration_seconds_bucket[5m])) > 1.0
+        for: 1m
+        labels:
+          severity: critical
+          service: payment-service
+          slo: latency
+        annotations:
+          summary: "Critical payment processing latency"
+          description: "95th percentile payment latency is {{ $value }}s, critically exceeding SLO"
+
+      # Financial-specific alerts
+      - alert: HighValuePaymentStuck
+        expr: sum(payment_amount_naira_bucket{le="100000"}) - sum(payment_amount_naira_bucket{le="50000"}) > 10
+        for: 5m
+        labels:
+          severity: critical
+          service: payment-service
+          category: financial
+        annotations:
+          summary: "High value payments accumulating"
+          description: "More than 10 high-value payments (>50k NGN) are pending processing"
+
+      - alert: FraudDetectionSpike
+        expr: rate(fraud_detections_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          service: payment-service
+          category: fraud
+        annotations:
+          summary: "Unusual fraud detection activity"
+          description: "Fraud detection rate is {{ $value }} per second, investigate for potential attack"
+
+      - alert: ActivePaymentsHigh
+        expr: active_payments > 100
+        for: 5m
+        labels:
+          severity: warning
+          service: payment-service
+          category: capacity
+        annotations:
+          summary: "High number of active payments"
+          description: "{{ $value }} payments are currently being processed, may indicate processing delays"
+
+  - name: system_alerts
+    rules:
+      - alert: HighCPUUsage
+        expr: 100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+          category: infrastructure
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}"
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          category: infrastructure
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value }}% on {{ $labels.instance }}"
+
+      - alert: DiskSpaceLow
+        expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+          category: infrastructure
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Disk usage is {{ $value }}% on {{ $labels.instance }}"
+
+  - name: database_alerts
+    rules:
+      - alert: PostgreSQLDown
+        expr: pg_up == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: postgresql
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL database is not responding"
+
+      - alert: PostgreSQLTooManyConnections
+        expr: sum(pg_stat_activity_count) > 80
+        for: 2m
+        labels:
+          severity: warning
+          service: postgresql
+        annotations:
+          summary: "PostgreSQL has too many connections"
+          description: "PostgreSQL has {{ $value }} active connections"
+
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: redis
+        annotations:
+          summary: "Redis is down"
+          description: "Redis cache server is not responding"
+
+  - name: business_metrics_alerts
+    rules:
+      - alert: DailyTransactionVolumeAnomaly
+        expr: |
+          (
+            sum(rate(payment_requests_total{status="completed"}[1h])) * 3600 * 24
+          ) < 
+          (
+            avg_over_time(sum(rate(payment_requests_total{status="completed"}[1h]))[7d:1h]) * 3600 * 24 * 0.5
+          )
+        for: 1h
+        labels:
+          severity: warning
+          category: business
+        annotations:
+          summary: "Daily transaction volume significantly below normal"
+          description: "Today's transaction volume is less than 50% of the 7-day average"
+
+      - alert: UnusualPaymentMethodDistribution
+        expr: |
+          (
+            rate(payment_requests_total{method="card",status="completed"}[1h]) /
+            rate(payment_requests_total{status="completed"}[1h])
+          ) > 0.8
+        for: 30m
+        labels:
+          severity: info
+          category: business
+        annotations:
+          summary: "Unusual payment method distribution"
+          description: "Card payments represent more than 80% of transactions in the last hour"
+
+  - name: security_alerts
+    rules:
+      - alert: HighFailureRateFromSingleIP
+        expr: |
+          sum by (source_ip) (rate(payment_requests_total{status="failed"}[5m])) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+          category: security
+        annotations:
+          summary: "High failure rate from single IP"
+          description: "IP {{ $labels.source_ip }} has failure rate of {{ $value }} req/s"
+
+      - alert: FraudDetectionSystemDown
+        expr: |
+          (
+            rate(fraud_detections_total[5m]) == 0
+          ) and
+          (
+            rate(payment_requests_total[5m]) > 0
+          )
+        for: 5m
+        labels:
+          severity: critical
+          category: security
+        annotations:
+          summary: "Fraud detection system appears to be down"
+          description: "No fraud detections while payments are being processed - system may be offline"

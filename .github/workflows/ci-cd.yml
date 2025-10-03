@@ -1,0 +1,387 @@
+# CI/CD Pipeline for SRE Financial Services Platform
+# This pipeline demonstrates SRE best practices for reliable deployments
+
+name: SRE Platform CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Code Quality and Security Checks
+  code-quality:
+    name: Code Quality & Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install black isort flake8 mypy bandit safety
+
+      - name: Code formatting check
+        run: black --check --diff .
+
+      - name: Import sorting check
+        run: isort --check-only --diff .
+
+      - name: Linting
+        run: flake8 .
+
+      - name: Type checking
+        run: mypy services/
+
+      - name: Security scan
+        run: bandit -r services/
+
+      - name: Dependency vulnerability scan
+        run: safety check
+
+  # Unit and Integration Tests
+  test:
+    name: Unit & Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest-cov pytest-xdist
+
+      - name: Run unit tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          pytest tests/unit/ -v --cov=services --cov-report=xml --cov-report=term-missing
+
+      - name: Run integration tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          pytest tests/integration/ -v
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+
+  # Container Security Scanning
+  container-security:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t payment-service:latest ./services/payment-service
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'payment-service:latest'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # Infrastructure Validation
+  infrastructure:
+    name: Infrastructure Validation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infrastructure/terraform
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.6.0
+
+      - name: Terraform Format Check
+        run: terraform fmt -check
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -var-file="environments/dev.tfvars"
+
+      - name: Run tfsec security scanner
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: infrastructure/terraform
+
+  # Load Testing
+  load-test:
+    name: Load Testing
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Compose
+        run: |
+          docker-compose up -d payment-service postgres redis
+          sleep 30  # Wait for services to be ready
+
+      - name: Wait for services to be healthy
+        run: |
+          timeout 60 bash -c 'until curl -f http://localhost:8000/health; do sleep 2; done'
+
+      - name: Run k6 load test
+        uses: grafana/k6-action@v0.3.0
+        with:
+          filename: testing/load/payment-load-test.js
+        env:
+          BASE_URL: http://localhost:8000
+
+      - name: Upload load test results
+        uses: actions/upload-artifact@v3
+        with:
+          name: load-test-results
+          path: load-test-results.json
+
+  # Build and Push Container Images
+  build:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: [code-quality, test, container-security]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/payment-service
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/payment-service
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Deployment with Canary Strategy
+  deploy:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build, infrastructure, load-test]
+    if: github.ref == 'refs/heads/main'
+    environment: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name sre-financial-platform-staging-eks --region us-west-2
+
+      - name: Deploy with Argo Rollouts (Canary)
+        run: |
+          # Apply Kubernetes manifests with canary deployment strategy
+          kubectl apply -f infrastructure/kubernetes/staging/
+          
+          # Monitor canary deployment
+          kubectl argo rollouts promote payment-service -n default
+          kubectl argo rollouts status payment-service -n default --timeout=600s
+
+      - name: Run smoke tests
+        run: |
+          # Run basic smoke tests to verify deployment
+          bash testing/smoke-tests.sh
+
+      - name: Notify deployment status
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#sre-deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+
+  # Production Deployment (Manual Approval)
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name sre-financial-platform-prod-eks --region us-west-2
+
+      - name: Pre-deployment validation
+        run: |
+          # Validate cluster state
+          kubectl cluster-info
+          kubectl get nodes
+          
+          # Check current application health
+          kubectl get pods -n default
+          kubectl get svc -n default
+
+      - name: Deploy to production with blue/green strategy
+        run: |
+          # Deploy new version to green environment
+          kubectl apply -f infrastructure/kubernetes/production/
+          
+          # Wait for deployment to be ready
+          kubectl rollout status deployment/payment-service -n default --timeout=600s
+
+      - name: Run production smoke tests
+        run: |
+          bash testing/production-smoke-tests.sh
+
+      - name: Switch traffic to new version
+        run: |
+          # Update ingress to point to new version
+          kubectl patch ingress payment-service-ingress -n default -p '{"spec":{"rules":[{"host":"api.payment.company.com","http":{"paths":[{"path":"/","pathType":"Prefix","backend":{"service":{"name":"payment-service-green","port":{"number":8000}}}}]}}]}}'
+
+      - name: Monitor deployment
+        run: |
+          # Monitor key metrics for 10 minutes
+          sleep 600
+          
+          # Check error rates and latency
+          python scripts/check-deployment-health.py
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          kubectl rollout undo deployment/payment-service -n default
+          kubectl patch ingress payment-service-ingress -n default -p '{"spec":{"rules":[{"host":"api.payment.company.com","http":{"paths":[{"path":"/","pathType":"Prefix","backend":{"service":{"name":"payment-service-blue","port":{"number":8000}}}}]}}]}}'
+
+      - name: Notify production deployment
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#sre-alerts'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          text: |
+            🚀 Production deployment completed
+            Environment: Production
+            Version: ${{ github.sha }}
+            Status: ${{ job.status }}
+
+  # Post-deployment monitoring
+  post-deployment:
+    name: Post-deployment Monitoring
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Setup monitoring alerts
+        run: |
+          # Enable enhanced monitoring for the next 24 hours
+          python scripts/enable-enhanced-monitoring.py
+
+      - name: Create deployment record
+        run: |
+          # Record deployment in monitoring system
+          curl -X POST "https://monitoring.company.com/api/deployments" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "service": "payment-service",
+              "version": "${{ github.sha }}",
+              "environment": "production",
+              "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'",
+              "author": "${{ github.actor }}"
+            }'

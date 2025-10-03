@@ -1,0 +1,32 @@
+# Prometheus Configuration for Local Development
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Load rules
+rule_files:
+  - "alert_rules.yml"
+
+# Scrape configuration for local development
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 15s
+
+  # Payment Service (running locally)
+  - job_name: 'payment-service'
+    static_configs:
+      - targets: ['localhost:9001']  # Metrics port
+    scrape_interval: 10s
+    metrics_path: /metrics
+    scrape_timeout: 5s
+
+  # Add health check monitoring
+  - job_name: 'payment-service-app'
+    static_configs:
+      - targets: ['localhost:9000']  # App port for health check
+    scrape_interval: 30s
+    metrics_path: /health
+    scrape_timeout: 5s
