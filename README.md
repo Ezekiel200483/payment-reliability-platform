@@ -110,9 +110,8 @@ docker-compose ps
 ```bash
 # Open Prometheus
 open http://localhost:9090
-
-![image alt](https://github.com/Ezekiel200483/payment-reliability-platform/blob/a7c56c72c1f64efd27479061c2ee72cc16fea42f/Screenshot%202025-10-03%20at%2015.17.40.png)
-
+```
+![image alt](https://github.com/Ezekiel200483/payment-reliability-platform/blob/38108303b87d9a86329ef83a5a069b6b21221b77/Screenshot%202025-10-03%20at%2015.17.40.png)
 
 
 
