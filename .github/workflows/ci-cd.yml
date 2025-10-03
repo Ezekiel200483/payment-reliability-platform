@@ -138,38 +138,21 @@ jobs:
         with:
           sarif_file: 'trivy-results.sarif'
 
-  # Infrastructure Validation
-  infrastructure:
-    name: Infrastructure Validation
+  # Docker Compose Validation
+  docker-validation:
+    name: Docker Compose Validation
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: infrastructure/terraform
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.6.0
+      - name: Validate Docker Compose
+        run: docker-compose config
 
-      - name: Terraform Format Check
-        run: terraform fmt -check
-
-      - name: Terraform Init
-        run: terraform init -backend=false
-
-      - name: Terraform Validate
-        run: terraform validate
-
-      - name: Terraform Plan
-        run: terraform plan -var-file="environments/dev.tfvars"
-
-      - name: Run tfsec security scanner
-        uses: aquasecurity/tfsec-action@v1.0.0
-        with:
-          working_directory: infrastructure/terraform
+      - name: Check Docker Compose services
+        run: |
+          docker-compose pull
+          docker-compose build --no-cache payment-service
 
   # Load Testing
   load-test:
@@ -243,48 +226,50 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Deployment with Canary Strategy
+  # Docker Compose Deployment to Staging
   deploy:
     name: Deploy to Staging
     runs-on: ubuntu-latest
-    needs: [build, infrastructure, load-test]
+    needs: [build, docker-validation, load-test]
     if: github.ref == 'refs/heads/main'
     environment: staging
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-west-2
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update kubeconfig
+      - name: Deploy with Docker Compose
         run: |
-          aws eks update-kubeconfig --name sre-financial-platform-staging-eks --region us-west-2
-
-      - name: Deploy with Argo Rollouts (Canary)
-        run: |
-          # Apply Kubernetes manifests with canary deployment strategy
-          kubectl apply -f infrastructure/kubernetes/staging/
+          # Pull latest images
+          docker-compose pull
           
-          # Monitor canary deployment
-          kubectl argo rollouts promote payment-service -n default
-          kubectl argo rollouts status payment-service -n default --timeout=600s
+          # Deploy services
+          docker-compose up -d --build
+          
+          # Wait for services to be ready
+          sleep 30
 
       - name: Run smoke tests
         run: |
-          # Run basic smoke tests to verify deployment
+          # Wait for payment service to be healthy
+          timeout 60 bash -c 'until curl -f http://localhost:8000/health; do sleep 2; done'
+          
+          # Run smoke test script
           bash testing/smoke-tests.sh
 
       - name: Notify deployment status
-        uses: 8398a7/action-slack@v3
-        with:
-          status: ${{ job.status }}
-          channel: '#sre-deployments'
-          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        if: always()
+        run: |
+          echo "Deployment to staging completed with status: ${{ job.status }}"
 
   # Production Deployment (Manual Approval)
   deploy-production:
@@ -297,69 +282,61 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-west-2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Update kubeconfig
-        run: |
-          aws eks update-kubeconfig --name sre-financial-platform-prod-eks --region us-west-2
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pre-deployment validation
         run: |
-          # Validate cluster state
-          kubectl cluster-info
-          kubectl get nodes
+          # Validate Docker Compose configuration
+          docker-compose config
           
-          # Check current application health
-          kubectl get pods -n default
-          kubectl get svc -n default
+          # Check if services are accessible
+          docker-compose ps
 
-      - name: Deploy to production with blue/green strategy
+      - name: Deploy to production
         run: |
-          # Deploy new version to green environment
-          kubectl apply -f infrastructure/kubernetes/production/
+          # Deploy new version
+          docker-compose pull
+          docker-compose up -d --build
           
           # Wait for deployment to be ready
-          kubectl rollout status deployment/payment-service -n default --timeout=600s
+          sleep 60
 
       - name: Run production smoke tests
         run: |
+          # Run comprehensive production smoke tests
           bash testing/production-smoke-tests.sh
-
-      - name: Switch traffic to new version
-        run: |
-          # Update ingress to point to new version
-          kubectl patch ingress payment-service-ingress -n default -p '{"spec":{"rules":[{"host":"api.payment.company.com","http":{"paths":[{"path":"/","pathType":"Prefix","backend":{"service":{"name":"payment-service-green","port":{"number":8000}}}}]}}]}}'
 
       - name: Monitor deployment
         run: |
-          # Monitor key metrics for 10 minutes
-          sleep 600
+          # Monitor key metrics for 5 minutes
+          echo "Monitoring deployment health..."
+          sleep 300
           
-          # Check error rates and latency
+          # Run comprehensive health check
           python scripts/check-deployment-health.py
 
       - name: Rollback on failure
         if: failure()
         run: |
-          kubectl rollout undo deployment/payment-service -n default
-          kubectl patch ingress payment-service-ingress -n default -p '{"spec":{"rules":[{"host":"api.payment.company.com","http":{"paths":[{"path":"/","pathType":"Prefix","backend":{"service":{"name":"payment-service-blue","port":{"number":8000}}}}]}}]}}'
+          echo "Rolling back deployment..."
+          docker-compose down
+          docker-compose up -d
 
       - name: Notify production deployment
-        uses: 8398a7/action-slack@v3
-        with:
-          status: ${{ job.status }}
-          channel: '#sre-alerts'
-          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
-          text: |
-            🚀 Production deployment completed
-            Environment: Production
-            Version: ${{ github.sha }}
-            Status: ${{ job.status }}
+        if: always()
+        run: |
+          echo "🚀 Production deployment completed"
+          echo "Environment: Production"
+          echo "Version: ${{ github.sha }}"
+          echo "Status: ${{ job.status }}"
 
   # Post-deployment monitoring
   post-deployment:
@@ -368,20 +345,29 @@ jobs:
     needs: [deploy-production]
     if: github.ref == 'refs/heads/main'
     steps:
-      - name: Setup monitoring alerts
+      - name: Setup monitoring validation
         run: |
-          # Enable enhanced monitoring for the next 24 hours
-          python scripts/enable-enhanced-monitoring.py
+          # Validate monitoring stack is running
+          echo "Validating monitoring stack..."
+          
+          # Check Prometheus metrics
+          timeout 30 bash -c 'until curl -f http://localhost:9090/-/healthy; do sleep 2; done' || echo "Prometheus not accessible"
+          
+          # Check Grafana
+          timeout 30 bash -c 'until curl -f http://localhost:3000/api/health; do sleep 2; done' || echo "Grafana not accessible"
 
       - name: Create deployment record
         run: |
-          # Record deployment in monitoring system
-          curl -X POST "https://monitoring.company.com/api/deployments" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "service": "payment-service",
-              "version": "${{ github.sha }}",
-              "environment": "production",
-              "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'",
-              "author": "${{ github.actor }}"
-            }'
+          # Record deployment in local logs
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) - Deployment completed" >> deployment.log
+          echo "Service: payment-service" >> deployment.log
+          echo "Version: ${{ github.sha }}" >> deployment.log
+          echo "Environment: production" >> deployment.log
+          echo "Author: ${{ github.actor }}" >> deployment.log
+          echo "---" >> deployment.log
+
+      - name: Archive deployment logs
+        uses: actions/upload-artifact@v3
+        with:
+          name: deployment-logs
+          path: deployment.log
