@@ -1,0 +1,32 @@
+# 🔧 Docker Compose Configuration for Staging Environment
+# Extends the base docker-compose.yml with staging-specific settings
+
+version: '3.8'
+
+services:
+  payment-service:
+    environment:
+      - ENVIRONMENT=staging
+      - LOG_LEVEL=DEBUG
+      - METRICS_ENABLED=true
+      - JAEGER_ENABLED=true
+    labels:
+      - "deployment.environment=staging"
+      - "deployment.version=${IMAGE_TAG:-latest}"
+
+  prometheus:
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+      - '--log.level=debug'
+
+  grafana:
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=staging123
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel
+      - GF_FEATURE_TOGGLES_ENABLE=publicDashboards
