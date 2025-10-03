@@ -111,6 +111,8 @@ docker-compose ps
 # Open Prometheus
 open http://localhost:9090
 
+![image alt](https://github.com/Ezekiel200483/payment-reliability-platform/blob/a7c56c72c1f64efd27479061c2ee72cc16fea42f/Screenshot%202025-10-03%20at%2015.17.40.png)
+
 
 
 
